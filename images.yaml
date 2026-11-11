@@ -1,0 +1,40 @@
+# The images to build. The workflow runs one job per entry: fetch the
+# upstream cloud image, apply `update`, test it, publish it.
+#
+#   name            image name in the registry: <registry>/<repo>/<name>
+#   distro          fedora | centos  (where fetch-image.sh gets the image)
+#   release         Fedora release number, or CentOS Stream major version
+#   update          run in the VM as root to bring it up to date
+#   guest_packages  what the test installs: the `vm.guest_packages` of the
+#                   ci-freeipa preset (sets such as ipa-distro, `-name` drops)
+#   experimental    a failure does not fail the workflow; nothing is published
+#                   from a failed job in any case
+images:
+  - name: fedora-44
+    distro: fedora
+    release: "44"
+    update: dnf -y --refresh --enablerepo=updates-testing upgrade
+    guest_packages: [ipa-distro]
+
+  - name: fedora-45
+    distro: fedora
+    release: "45"
+    update: dnf -y --refresh --enablerepo=updates-testing upgrade
+    guest_packages: [ipa-distro]
+
+  # CentOS Stream has no updates-testing: the update is the latest Stream.
+  # The package set is a guess for EL (no encrypted-dns, no HSM selinux
+  # modules) and has not been run.
+  - name: centos-stream-9
+    distro: centos
+    release: "9"
+    update: dnf -y --refresh upgrade
+    guest_packages: [ipa-distro, -freeipa-server-encrypted-dns, -freeipa-client-encrypted-dns, -freeipa-selinux-nfast, -freeipa-selinux-luna, -freeipa-client-epn]
+    experimental: true
+
+  - name: centos-stream-10
+    distro: centos
+    release: "10"
+    update: dnf -y --refresh upgrade
+    guest_packages: [ipa-distro, -freeipa-server-encrypted-dns, -freeipa-client-encrypted-dns, -freeipa-selinux-nfast, -freeipa-selinux-luna, -freeipa-client-epn]
+    experimental: true

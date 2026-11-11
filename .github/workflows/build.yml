@@ -1,0 +1,160 @@
+name: Build and publish VM images
+
+# One job per image in images.yaml: fetch the upstream cloud image, bring it
+# up to date (Fedora: with updates-testing), install a FreeIPA server on it
+# with ci-freeipa, and only if that passes, push it to the registry of this
+# repository as a containerdisk (ghcr.io/<owner>/<repo>/<image>).
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'        # Mondays 03:17 UTC
+  workflow_dispatch:
+    inputs:
+      only:
+        description: 'Comma separated image names from images.yaml (default: all)'
+        required: false
+        default: ''
+      publish:
+        description: 'Publish the images that pass'
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths: ['scripts/**', 'images.yaml', '.github/workflows/build.yml']
+  pull_request:
+    paths: ['scripts/**', 'images.yaml', '.github/workflows/build.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # the checkout of ci-freeipa that runs the test; set repository variables
+  # CI_FREEIPA_REPO / CI_FREEIPA_REF to use another
+  CI_FREEIPA_REPO: ${{ vars.CI_FREEIPA_REPO || 'abbra/ci-freeipa' }}
+  CI_FREEIPA_REF: ${{ vars.CI_FREEIPA_REF || 'main' }}
+
+jobs:
+  matrix:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: matrix
+        env:
+          # a pull request tries one image; a manual run may name some
+          ONLY: ${{ github.event_name == 'pull_request' && 'fedora-45' || inputs.only }}
+        run: echo "matrix=$(python3 scripts/matrix.py --only "$ONLY")" >> "$GITHUB_OUTPUT"
+
+  image:
+    needs: matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    # an experimental image may fail without failing the workflow; a failed
+    # image is never published either way
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.matrix.outputs.matrix) }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      NAME: ${{ matrix.name }}
+      PACKAGES: ${{ matrix.packages }}
+      UPDATE: ${{ matrix.update }}
+      WORK: ${{ github.workspace }}/work
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare the host
+        run: |
+          # let the runner user use KVM
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+              | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -w /dev/kvm || { echo "::error::/dev/kvm is not available on this runner"; exit 1; }
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              qemu-system-x86 qemu-utils xorriso rsync openssh-client python3-yaml
+          # the VMs of the test authorize the runner's ssh key
+          [ -e ~/.ssh/id_ed25519 ] || ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/id_ed25519
+          mkdir -p "$WORK"
+
+      - name: Fetch the upstream image
+        run: |
+          scripts/fetch-image.sh "${{ matrix.distro }}" "${{ matrix.release }}" "$WORK"
+          sed "s/'//g" "$WORK/base.env" >> "$GITHUB_ENV"
+
+      - name: Bring it up to date
+        run: scripts/update-image.sh "$BASE_FILE" "$WORK/image.qcow2" "$UPDATE" "$WORK/report"
+
+      - name: Record what the update changed
+        run: |
+          {
+            echo "### $NAME"
+            echo "Base: \`$BASE_NAME\` (sha256 \`$BASE_SHA256\`)"
+            echo "Update: \`$UPDATE\`"
+            echo "Packages added or changed: $(wc -l < "$WORK/report/updated.txt")"
+            echo '<details><summary>List</summary>'; echo; echo '```'
+            cat "$WORK/report/updated.txt"
+            echo '```'; echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check out ci-freeipa
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.CI_FREEIPA_REPO }}
+          ref: ${{ env.CI_FREEIPA_REF }}
+          path: ci-freeipa
+
+      - name: Test - install a FreeIPA server on the image
+        run: |
+          preset="$WORK/preset.yaml"
+          scripts/render-preset.py --name "$NAME" --image "$WORK/image.qcow2" \
+              --packages "$PACKAGES" > "$preset"
+          cli=ci-freeipa/env/freeipa-env
+          wd=(--workdir "$WORK/env")
+          rc=0
+          "$cli" up "$preset" "${wd[@]}" && "$cli" run "$preset" "${wd[@]}" || rc=$?
+          "$cli" summary "$preset" "${wd[@]}" >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
+          "$cli" down "$preset" "${wd[@]}" || true
+          exit $rc
+
+      - name: Keep the test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.name }}
+          path: |
+            work/env/logs
+            work/report
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Publish
+        # only an image that passed, from the default branch, on request or
+        # on schedule
+        if: >-
+          success() &&
+          github.ref == 'refs/heads/main' &&
+          github.event_name != 'pull_request' &&
+          (github.event_name != 'workflow_dispatch' || inputs.publish)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          repo="$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          ref="ghcr.io/$repo/$NAME"
+          today="$(date -u +%Y%m%d)"
+          echo "$GH_TOKEN" | podman login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          SOURCE_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" IMAGE_VERSION="$today" \
+              scripts/publish.sh --push "$WORK/image.qcow2" "$ref:latest" "$ref:$today"
+          {
+            echo "Published \`$ref:latest\` and \`$ref:$today\`. Use it in a ci-freeipa preset:"
+            echo '```yaml'; echo "vm:"; echo "  image: containerdisk:$ref:latest"; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
