@@ -104,4 +104,7 @@ checks (they need podman and qemu-img for the publish tests and skip without).
 - **A GitHub-hosted runner needs `/dev/kvm`.** The workflow enables it with a
   udev rule and fails with a clear message when the runner has none.
 - The image keeps the upstream partition layout, grown to 20 GB so that the
-  update has room; ci-freeipa grows it again to its own `vm.disk`.
+  update has room. A VM started from it needs a disk of at least 20 GB: in
+  ci-freeipa that is `vm.disk` (default 40G), which grows the filesystem to
+  match. ci-freeipa refuses a smaller `vm.disk`; a smaller overlay would cut
+  the end of the image off and the VM would not boot.
