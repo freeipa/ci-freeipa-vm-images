@@ -29,7 +29,8 @@ def test_every_image_in_images_yaml_is_usable():
     m = matrix.matrix(matrix.load())['include']
     assert {i['name'] for i in m} >= {'fedora-44', 'fedora-45'}
     for i in m:
-        assert i['distro'] in ('fedora', 'centos') and i['release'].isdigit()
+        assert i['distro'] in ('fedora', 'centos')
+        assert i['release'].isdigit() or i['release'] == 'rawhide'
         assert isinstance(json.loads(i['packages']), list)
         assert isinstance(i['experimental'], bool)
         # the registry name must be a valid lowercase repository path
