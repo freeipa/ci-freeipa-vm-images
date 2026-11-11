@@ -66,6 +66,7 @@ qemu-system-x86_64 -name image-update -machine q35,accel=kvm -cpu host \
 vm() {
     ssh -i "$work/key" -p "$port" -o StrictHostKeyChecking=no \
         -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o BatchMode=yes \
+        -o IdentitiesOnly=yes -o IdentityAgent=none \
         -o ConnectTimeout=5 root@127.0.0.1 "$@"
 }
 
@@ -82,7 +83,8 @@ echo "== update: $update_cmd"
 vm "$update_cmd"
 
 vm "$pkgs" > "$work/after.txt"
-comm -13 "$work/before.txt" "$work/after.txt" > "$work/updated.txt"
+# sorted here, in one locale: the guest's sort order is not ours
+comm -13 <(LC_ALL=C sort "$work/before.txt") <(LC_ALL=C sort "$work/after.txt") > "$work/updated.txt"
 echo "== $(wc -l < "$work/updated.txt") package(s) added or changed"
 if [ -n "$report" ]; then
     cp "$work/after.txt" "$report/packages.txt"
@@ -91,7 +93,8 @@ fi
 
 echo "== cleaning the guest"
 # so that it boots like a fresh cloud image: cloud-init runs again, the host
-# keys, machine id and hostname are made anew, our key is gone
+# keys, machine id and hostname are made anew, our key is gone. The same
+# command powers the VM off: once it has run, ssh no longer lets us in.
 vm 'cloud-init clean --logs --seed
     rm -rf /root/.ssh /home/*/.ssh /etc/hostname
     rm -f /etc/ssh/ssh_host_* /var/lib/systemd/random-seed
@@ -99,8 +102,8 @@ vm 'cloud-init clean --logs --seed
     dnf clean all >/dev/null 2>&1; rm -rf /var/cache/dnf/* /var/tmp/* /tmp/*
     journalctl --rotate --vacuum-time=1s >/dev/null 2>&1 || true
     fstrim -av >/dev/null 2>&1 || true
-    sync'
-vm 'systemctl poweroff' 2>/dev/null || true
+    sync
+    systemctl poweroff --no-block' 2>/dev/null || true   # our key is gone by now
 for _ in $(seq 60); do kill -0 "$(cat "$work/qemu.pid")" 2>/dev/null || break; sleep 2; done
 if kill -0 "$(cat "$work/qemu.pid")" 2>/dev/null; then die "the VM did not power off"; fi
 rm -f "$work/qemu.pid"
