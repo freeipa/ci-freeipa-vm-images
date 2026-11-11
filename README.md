@@ -1,4 +1,4 @@
-# freeipa-vm-images
+# ci-freeipa-vm-images
 
 Regularly built VM images for FreeIPA testing, published to this repository's
 container registry.
@@ -18,7 +18,7 @@ boots VMs from it:
 # a ci-freeipa preset
 vm:
   backend: qemu
-  image: containerdisk:ghcr.io/OWNER/freeipa-vm-images/fedora-45:latest
+  image: containerdisk:ghcr.io/freeipa/ci-freeipa-vm-images/fedora-45:latest
 ```
 
 ## What a job does

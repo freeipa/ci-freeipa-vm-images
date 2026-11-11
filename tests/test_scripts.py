@@ -90,8 +90,8 @@ def test_publish_labels_the_image_so_ghcr_links_it_to_the_repository(tmp_path):
             labels = json.loads(out)
             assert labels['org.opencontainers.image.source'] == 'https://github.com/o/r'
             assert labels['org.opencontainers.image.version'] == '20260101'
-            assert labels['io.github.freeipa-vm-images.base'] == 'base.qcow2'
-            assert labels['io.github.freeipa-vm-images.disk-sha256'] == \
+            assert labels['io.github.freeipa.ci-vm-images.base'] == 'base.qcow2'
+            assert labels['io.github.freeipa.ci-vm-images.disk-sha256'] == \
                 hashlib.sha256(disk.read_bytes()).hexdigest()
     finally:
         for ref in refs:

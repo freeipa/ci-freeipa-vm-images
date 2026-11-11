@@ -35,12 +35,12 @@ printf 'FROM scratch\nCOPY disk.qcow2 /disk/disk.qcow2\n' > "$ctx/Containerfile"
 sum="$(sha256sum "$disk" | cut -d' ' -f1)"
 labels=(--label "org.opencontainers.image.title=$(basename "$disk")"
         --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        --label "io.github.freeipa-vm-images.disk-sha256=$sum")
+        --label "io.github.freeipa.ci-vm-images.disk-sha256=$sum")
 [ -z "${SOURCE_URL:-}" ] || labels+=(--label "org.opencontainers.image.source=$SOURCE_URL")
 [ -z "${IMAGE_VERSION:-}" ] || labels+=(--label "org.opencontainers.image.version=$IMAGE_VERSION")
-[ -z "${BASE_NAME:-}" ] || labels+=(--label "io.github.freeipa-vm-images.base=$BASE_NAME")
-[ -z "${BASE_SHA256:-}" ] || labels+=(--label "io.github.freeipa-vm-images.base-sha256=$BASE_SHA256")
-[ -z "${UPDATE:-}" ] || labels+=(--label "io.github.freeipa-vm-images.update=$UPDATE")
+[ -z "${BASE_NAME:-}" ] || labels+=(--label "io.github.freeipa.ci-vm-images.base=$BASE_NAME")
+[ -z "${BASE_SHA256:-}" ] || labels+=(--label "io.github.freeipa.ci-vm-images.base-sha256=$BASE_SHA256")
+[ -z "${UPDATE:-}" ] || labels+=(--label "io.github.freeipa.ci-vm-images.update=$UPDATE")
 
 podman build -q "${labels[@]}" -t "${refs[0]}" -f "$ctx/Containerfile" "$ctx" >/dev/null
 for ref in "${refs[@]:1}"; do podman tag "${refs[0]}" "$ref"; done
