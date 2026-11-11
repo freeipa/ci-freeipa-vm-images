@@ -92,9 +92,18 @@ jobs:
               echo "::error::/dev/kvm is not available on this runner (no nested virtualization)"
               exit 1
           fi
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-              qemu-system-x86 qemu-utils xorriso rsync openssh-client python3-yaml
+          # the runner's Azure mirror is sometimes unreachable: short
+          # timeouts, retries, and the main archive after the first failure
+          apt_opts="-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+          for attempt in 1 2 3; do
+              # shellcheck disable=SC2086
+              sudo apt-get $apt_opts update && sudo apt-get $apt_opts install -y --no-install-recommends \
+                  qemu-system-x86 qemu-utils xorriso rsync openssh-client python3-yaml && break
+              [ "$attempt" = 3 ] && { echo "::error::apt is unreachable"; exit 1; }
+              sudo sed -i 's#azure.archive.ubuntu.com#archive.ubuntu.com#g' \
+                  /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
+              sleep 10
+          done
           # the VMs of the test authorize the runner's ssh key
           [ -e ~/.ssh/id_ed25519 ] || ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/id_ed25519
           mkdir -p "$WORK"
