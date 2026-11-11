@@ -3,7 +3,7 @@
 #
 # Usage: fetch-image.sh DISTRO RELEASE OUTDIR
 #   DISTRO   fedora | centos
-#   RELEASE  Fedora release number, or CentOS Stream major version
+#   RELEASE  Fedora release number or rawhide, or CentOS Stream major version
 #
 # Writes OUTDIR/<upstream file name> and OUTDIR/base.env with
 #   BASE_FILE, BASE_NAME, BASE_VERSION, BASE_URL, BASE_SHA256
@@ -14,24 +14,38 @@ set -euo pipefail
 die() { echo "error: $*" >&2; exit 1; }
 [ $# -eq 3 ] || die "usage: $0 DISTRO RELEASE OUTDIR"
 distro="$1" rel="$2" out="$3"
-[[ "$rel" =~ ^[0-9]+$ ]] || die "release must be a number: $rel"
+[[ "$rel" =~ ^[0-9]+$ || "$distro/$rel" = fedora/rawhide ]] || die "release must be a number (or rawhide for fedora): $rel"
 mkdir -p "$out"
 
-listing() { curl -fsSL --retry 3 --max-time 120 "$1/" 2>/dev/null || true; }
+# --retry-all-errors: the redirector sometimes picks a mirror that lags and
+# answers 404 for a file that exists
+listing() { curl -fsSL --retry 5 --retry-all-errors --max-time 120 "$1/" 2>/dev/null || true; }
 
 case "$distro" in
 fedora)
-    # a release is under releases/ once it is out, under development/ before
-    for tree in releases development; do
-        base="https://download.fedoraproject.org/pub/fedora/linux/$tree/$rel/Cloud/x86_64/images"
+    # a release is under releases/ once it is out, under development/ before;
+    # rawhide names its images with Rawhide and a dated .n.N version
+    if [ "$rel" = rawhide ]; then
+        trees="development" tok=Rawhide ver='[0-9]{8}\.n\.[0-9]+' dir=rawhide
+    else
+        trees="releases development" tok="$rel" ver='[0-9.]+' dir="$rel"
+    fi
+    for tree in $trees; do
+        # dl.fedoraproject.org, not the download. redirector: its mirrors lag
+        # and list a compose that another mirror does not have yet
+        base="https://dl.fedoraproject.org/pub/fedora/linux/$tree/$dir/Cloud/x86_64/images"
         html="$(listing "$base")"
-        name="$(grep -oE "Fedora-Cloud-Base-Generic-$rel-[0-9.]+\.x86_64\.qcow2" <<<"$html" | sort -uV | tail -n1 || true)"
+        name="$(grep -oE "Fedora-Cloud-Base-Generic-$tok-$ver\.x86_64\.qcow2" <<<"$html" | sort -uV | tail -n1 || true)"
         [ -n "$name" ] && break
     done
     [ -n "$name" ] || die "no Fedora $rel Generic cloud image found"
-    version="${name#Fedora-Cloud-Base-Generic-"$rel"-}"
+    version="${name#Fedora-Cloud-Base-Generic-"$tok"-}"
     version="${version%.x86_64.qcow2}"
-    sums="$base/Fedora-Cloud-$rel-$version-x86_64-CHECKSUM"
+    if [ "$rel" = rawhide ]; then
+        sums="$base/Fedora-Cloud-images-Rawhide-x86_64-$version-CHECKSUM"
+    else
+        sums="$base/Fedora-Cloud-$rel-$version-x86_64-CHECKSUM"
+    fi
     ;;
 centos)
     base="https://cloud.centos.org/centos/$rel-stream/x86_64/images"
@@ -46,7 +60,7 @@ centos)
 *) die "unknown distro: $distro (fedora or centos)" ;;
 esac
 
-sum="$(curl -fsSL --retry 3 --max-time 120 "$sums" | sed -n "s/^SHA256 ($name) = //p")"
+sum="$(curl -fsSL --retry 5 --retry-all-errors --max-time 120 "$sums" | sed -n "s/^SHA256 ($name) = //p")"
 [[ "$sum" =~ ^[0-9a-f]{64}$ ]] || die "no SHA-256 for $name in $sums"
 
 file="$out/$name"
@@ -54,7 +68,7 @@ if [ -s "$file" ] && echo "$sum  $file" | sha256sum -c - >/dev/null 2>&1; then
     echo "have $name ($version)"
 else
     echo "downloading $base/$name"
-    curl -fsSL --retry 3 --max-time 3600 -o "$file.partial" "$base/$name"
+    curl -fsSL --retry 5 --retry-all-errors --max-time 3600 -o "$file.partial" "$base/$name"
     echo "$sum  $file.partial" | sha256sum -c - >/dev/null \
         || { rm -f "$file.partial"; die "checksum mismatch for $name"; }
     mv "$file.partial" "$file"

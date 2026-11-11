@@ -34,8 +34,9 @@ Each image in `images.yaml` is one matrix job, so a failing release does not
 stop the others. An image marked `experimental` may fail without failing the
 workflow.
 
-The upstream sources are `download.fedoraproject.org` (Fedora Cloud Base
-*Generic*) and `cloud.centos.org` (CentOS Stream *GenericCloud*).
+The upstream sources are `dl.fedoraproject.org` (Fedora Cloud Base *Generic*;
+not the `download.` redirector, whose mirrors lag and answer 404) and
+`cloud.centos.org` (CentOS Stream *GenericCloud*).
 
 ## Setting it up
 
@@ -99,8 +100,8 @@ checks (they need podman and qemu-img for the publish tests and skip without).
   `freeipa` build from `updates-testing` needs that repository enabled in the
   test VM; the workflow does not do it.
 - **CentOS Stream has no `updates-testing`.** Its update is the latest Stream
-  content. The CentOS entries are `experimental`, their package list is a
-  guess for EL, and they have not been run.
+  content. Its entries use the `ipa-distro-el` package set and need a
+  ci-freeipa that has it. Rawhide is `experimental`: it breaks now and then.
 - **A GitHub-hosted runner needs `/dev/kvm`.** The workflow enables it with a
   udev rule and fails with a clear message when the runner has none.
 - The image keeps the upstream partition layout, grown to 20 GB so that the

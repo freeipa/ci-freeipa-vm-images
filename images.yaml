@@ -3,7 +3,8 @@
 #
 #   name            image name in the registry: <registry>/<repo>/<name>
 #   distro          fedora | centos  (where fetch-image.sh gets the image)
-#   release         Fedora release number, or CentOS Stream major version
+#   release         Fedora release number or rawhide, or CentOS Stream major
+#                   version
 #   update          run in the VM as root to bring it up to date
 #   guest_packages  what the test installs: the `vm.guest_packages` of the
 #                   ci-freeipa preset (sets such as ipa-distro, `-name` drops)
@@ -22,19 +23,25 @@ images:
     update: dnf -y --refresh --enablerepo=updates-testing upgrade
     guest_packages: [ipa-distro]
 
+  # Rawhide is itself the testing stream: no updates-testing, and it breaks
+  # now and then, so a failure must not fail the workflow.
+  - name: fedora-rawhide
+    distro: fedora
+    release: rawhide
+    update: dnf -y --refresh upgrade
+    guest_packages: [ipa-distro]
+    experimental: true
+
   # CentOS Stream has no updates-testing: the update is the latest Stream.
-  # The package set is a guess for EL (no encrypted-dns, no HSM selinux
-  # modules) and has not been run.
+  # ipa-distro-el needs a ci-freeipa that has it (names checked on 9 and 10).
   - name: centos-stream-9
     distro: centos
     release: "9"
     update: dnf -y --refresh upgrade
-    guest_packages: [ipa-distro, -freeipa-server-encrypted-dns, -freeipa-client-encrypted-dns, -freeipa-selinux-nfast, -freeipa-selinux-luna, -freeipa-client-epn]
-    experimental: true
+    guest_packages: [ipa-distro-el]
 
   - name: centos-stream-10
     distro: centos
     release: "10"
     update: dnf -y --refresh upgrade
-    guest_packages: [ipa-distro, -freeipa-server-encrypted-dns, -freeipa-client-encrypted-dns, -freeipa-selinux-nfast, -freeipa-selinux-luna, -freeipa-client-epn]
-    experimental: true
+    guest_packages: [ipa-distro-el]
