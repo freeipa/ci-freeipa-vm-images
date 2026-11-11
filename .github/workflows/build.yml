@@ -34,7 +34,7 @@ concurrency:
 env:
   # the checkout of ci-freeipa that runs the test; set repository variables
   # CI_FREEIPA_REPO / CI_FREEIPA_REF to use another
-  CI_FREEIPA_REPO: ${{ vars.CI_FREEIPA_REPO || 'abbra/ci-freeipa' }}
+  CI_FREEIPA_REPO: ${{ vars.CI_FREEIPA_REPO || 'freeipa/ci-freeipa' }}
   CI_FREEIPA_REF: ${{ vars.CI_FREEIPA_REF || 'main' }}
 
 jobs:

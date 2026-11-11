@@ -6,7 +6,7 @@ container registry.
 A scheduled GitHub Actions workflow takes the upstream cloud image of each
 release listed in [`images.yaml`](images.yaml), brings it up to date (Fedora:
 with `updates-testing`), installs a FreeIPA server on it with
-[ci-freeipa](https://github.com/abbra/ci-freeipa), and only if that passes
+[ci-freeipa](https://github.com/freeipa/ci-freeipa), and only if that passes
 pushes the image to `ghcr.io/<owner>/<repo>/<image>`. A broken update never
 reaches the registry.
 
@@ -46,7 +46,7 @@ not the `download.` redirector, whose mirrors lag and answer 404) and
    package as **private** and links it to the repository (the image carries
    `org.opencontainers.image.source`). Make the package public in its
    settings if others should pull it without a login.
-3. The test checks out `abbra/ci-freeipa` at `main`. To use another, set the
+3. The test checks out `freeipa/ci-freeipa` at `main`. To use another, set the
    repository variables `CI_FREEIPA_REPO` and `CI_FREEIPA_REF`.
 4. The schedule is in `.github/workflows/build.yml` (`cron`, Mondays 03:17
    UTC). Every run pushes about one image per release, so a daily schedule
