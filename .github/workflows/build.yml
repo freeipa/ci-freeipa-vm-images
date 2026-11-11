@@ -73,12 +73,25 @@ jobs:
 
       - name: Prepare the host
         run: |
-          # let the runner user use KVM
+          # let the runner user use KVM; load the module first, since a
+          # runner may not have loaded it
+          sudo modprobe kvm_intel 2>/dev/null || sudo modprobe kvm_amd 2>/dev/null || true
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
               | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-          test -w /dev/kvm || { echo "::error::/dev/kvm is not available on this runner"; exit 1; }
+          sudo udevadm settle
+          for _ in $(seq 15); do [ -w /dev/kvm ] && break; sleep 2; done
+          if [ ! -w /dev/kvm ]; then
+              echo "::group::KVM diagnostics"
+              ls -l /dev/kvm* 2>&1 || true
+              grep -c -E 'vmx|svm' /proc/cpuinfo || true
+              lscpu | grep -i -E 'model name|hypervisor|virtualization' || true
+              lsmod | grep -i kvm || true
+              echo "::endgroup::"
+              echo "::error::/dev/kvm is not available on this runner (no nested virtualization)"
+              exit 1
+          fi
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
               qemu-system-x86 qemu-utils xorriso rsync openssh-client python3-yaml

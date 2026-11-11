@@ -18,7 +18,7 @@
 set -euo pipefail
 
 die() { echo "error: $*" >&2; exit 1; }
-[ $# -ge 3 ] && [ $# -le 4 ] || die "usage: $0 BASE.qcow2 OUT.qcow2 'UPDATE COMMAND' [REPORT_DIR]"
+[[ $# -ge 3 && $# -le 4 ]] || die "usage: $0 BASE.qcow2 OUT.qcow2 'UPDATE COMMAND' [REPORT_DIR]"
 base="$(realpath "$1")" out="$2" update_cmd="$3" report="${4:-}"
 [ -f "$base" ] || die "no such file: $base"
 [ -w /dev/kvm ] || die "/dev/kvm is not writable: a KVM host is required"
