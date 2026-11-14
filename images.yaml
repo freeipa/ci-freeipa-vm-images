@@ -1,11 +1,18 @@
 # The images to build. The workflow runs one job per entry: fetch the
-# upstream cloud image, apply `update`, test it, publish it.
+# upstream cloud image, apply `update`, test it, publish it. Entries that
+# share `name` with different `arch` become members of one multi-arch
+# manifest list under that name in the registry.
 #
 #   name            image name in the registry: <registry>/<repo>/<name>
 #   distro          fedora | centos  (where fetch-image.sh gets the image)
 #   release         Fedora release number or rawhide, or CentOS Stream major
 #                   version
-#   update          run in the VM as root to bring it up to date
+#   arch            x86_64 (default) | aarch64: the upstream image to fetch,
+#                   the runner the job runs on, and the manifest member
+#   update          run in the VM as root to bring it up to date. Optional:
+#                   without it the fetched image is published as it is, with
+#                   no update and no FreeIPA test (the aarch64 lanes today;
+#                   see Limits in the README)
 #   guest_packages  what the test installs: the `vm.guest_packages` of the
 #                   ci-freeipa preset (sets such as ipa-distro, `-name` drops)
 #   experimental    a failure does not fail the workflow; nothing is published
@@ -45,3 +52,24 @@ images:
     release: "10"
     update: dnf -y --refresh upgrade
     guest_packages: [ipa-distro-el]
+
+  # aarch64 members of the Fedora tags: the checksum-verified upstream image,
+  # published into the same multi-arch tag as the x86_64 members above. No
+  # `update`: the GitHub arm runners have no KVM, so the image cannot be
+  # booted and updated there (see Limits in the README). Experimental until
+  # the full update-and-test lane runs on a KVM arm host. Only rawhide and
+  # the current release (45 as of today): older releases keep their
+  # x86_64-only tag.
+  - name: fedora-45
+    distro: fedora
+    release: "45"
+    arch: aarch64
+    guest_packages: [ipa-distro]
+    experimental: true
+
+  - name: fedora-rawhide
+    distro: fedora
+    release: rawhide
+    arch: aarch64
+    guest_packages: [ipa-distro]
+    experimental: true
