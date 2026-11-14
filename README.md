@@ -10,6 +10,12 @@ with `updates-testing`), installs a FreeIPA server on it with
 pushes the image to `ghcr.io/<owner>/<repo>/<image>`. A broken update never
 reaches the registry.
 
+Entries that share a name with different `arch` are merged into one
+multi-arch manifest list, and one preset ref
+(`containerdisk:ghcr.io/.../fedora-45:latest`) then works on both host
+architectures. aarch64 members are built for Fedora rawhide and the
+current release only; older releases keep their x86_64-only tag.
+
 The images are *containerdisks*: a `FROM scratch` image that holds one file,
 `/disk/disk.qcow2`. ci-freeipa pulls one with podman, copies the disk out, and
 boots VMs from it:
@@ -25,14 +31,17 @@ vm:
 
 | Step | Script | |
 |---|---|---|
-| Fetch | `scripts/fetch-image.sh` | newest upstream image of the release; SHA-256 checked against the upstream checksum file |
-| Update | `scripts/update-image.sh` | boots it under qemu/KVM, runs the update command, records the packages it changed, cleans the guest (cloud-init state, ssh keys and host keys, machine id, caches), flattens and compresses it |
-| Test | ci-freeipa | `scripts/render-preset.py` writes a one-server preset; `freeipa-env up` installs the distro FreeIPA packages in a VM started from the image; `run` executes ipatests' `TestInstallMaster::test_install_master` |
-| Publish | `scripts/publish.sh` | builds the containerdisk, labels it, pushes `:latest` and `:YYYYMMDD` |
+| Fetch | `scripts/fetch-image.sh` | newest upstream image of the release and arch; SHA-256 checked against the upstream checksum file |
+| Update | `scripts/update-image.sh` | boots it under qemu/KVM of the image's arch, runs the update command, records the packages it changed, cleans the guest (cloud-init state, ssh keys and host keys, machine id, caches), flattens and compresses it. Skipped for an entry without `update` |
+| Test | ci-freeipa | `scripts/render-preset.py` writes a one-server preset; `freeipa-env up` installs the distro FreeIPA packages in a VM started from the image; `run` executes ipatests' `TestInstallMaster::test_install_master`. Skipped for an entry without `update` |
+| Publish | `scripts/publish.sh` | builds the containerdisk, labels it, pushes `:<date>-<arch>` |
+| Merge | `scripts/merge-manifests.sh` | one manifest job per run: merges the per-arch tags into the multi-arch `:latest` and `:<date>` |
 
-Each image in `images.yaml` is one matrix job, so a failing release does not
-stop the others. An image marked `experimental` may fail without failing the
-workflow.
+Each (image, arch) in `images.yaml` is one matrix job, so a failing release
+does not stop the others. An image marked `experimental` may fail without
+failing the workflow. The per-arch job runs on a runner of its own arch; the
+manifest job then publishes `latest` from the arches that succeeded, keeping
+the previous member (by digest) for an arch that did not.
 
 The upstream sources are `dl.fedoraproject.org` (Fedora Cloud Base *Generic*;
 not the `download.` redirector, whose mirrors lag and answer 404) and
@@ -63,22 +72,24 @@ Edit [`images.yaml`](images.yaml); one entry is one image.
 
 | Field | |
 |---|---|
-| `name` | the image name in the registry |
+| `name` | the image name in the registry; entries that share it become one multi-arch tag |
 | `distro`, `release` | `fedora` and a release number, or `centos` and a Stream major version |
-| `update` | the command that updates the VM |
+| `arch` | `x86_64` (default) or `aarch64`: the upstream image, the runner and the manifest member |
+| `update` | the command that updates the VM. Optional: without it the fetched image is published as it is (no update, no test) |
 | `guest_packages` | what the test installs (a ci-freeipa `vm.guest_packages`) |
 | `experimental` | a failure does not fail the workflow |
 
-Tags: `latest` moves with every successful build; `YYYYMMDD` stays. The image
-labels record the upstream file and its SHA-256 and the update command, and
-the SHA-256 of the disk.
+Tags: an (image, arch) job pushes `YYYYMMDD-<arch>`; the manifest job merges
+them into the multi-arch `latest` and `YYYYMMDD`. The image labels record the
+upstream file and its SHA-256 and the update command, and the SHA-256 of the
+disk.
 
 ## Running the steps yourself
 
 On a machine with KVM, qemu, xorriso and podman:
 
 ```sh
-scripts/fetch-image.sh fedora 45 work
+scripts/fetch-image.sh fedora 45 work            # add aarch64 for the arm image
 . work/base.env
 scripts/update-image.sh "$BASE_FILE" work/image.qcow2 \
     'dnf -y --refresh --enablerepo=updates-testing upgrade' work/report
@@ -89,8 +100,12 @@ scripts/render-preset.py --name fedora-45 --image "$PWD/work/image.qcow2" > work
 scripts/publish.sh work/image.qcow2 localhost/fedora-45:test      # add --push to push
 ```
 
-`scripts/matrix.py` prints the job matrix; `python3 -m pytest tests` runs the
-checks (they need podman and qemu-img for the publish tests and skip without).
+`scripts/matrix.py` prints the job matrix;
+`MATRIX="$(scripts/matrix.py)" REPO=$USER/images scripts/merge-manifests.sh
+REGISTRY` merges per-arch tags into multi-arch lists (any registry works;
+ghcr.io is the default); `python3 -m pytest tests` runs the checks (they
+need podman and qemu-img for the publish tests and skip without).
+
 
 ## Limits
 
@@ -102,8 +117,15 @@ checks (they need podman and qemu-img for the publish tests and skip without).
 - **CentOS Stream has no `updates-testing`.** Its update is the latest Stream
   content. Its entries use the `ipa-distro-el` package set and need a
   ci-freeipa that has it. Rawhide is `experimental`: it breaks now and then.
-- **A GitHub-hosted runner needs `/dev/kvm`.** The workflow enables it with a
-  udev rule and fails with a clear message when the runner has none.
+- **aarch64 members are the pristine upstream image.** The GitHub arm
+  runners have no `/dev/kvm` (and no nested virtualization), so the update
+  and the FreeIPA test cannot run there; entries without `update` publish
+  the checksum-verified upstream image, marked `experimental`. Giving
+  aarch64 the same update-and-test lane needs a KVM-capable arm runner
+  (self-hosted, or GitHub enabling KVM there).
+- **A GitHub-hosted runner needs `/dev/kvm`** for the update and test steps
+  only (an entry without `update` runs neither). The workflow enables KVM
+  with a udev rule and fails with a clear message when the runner has none.
 - The image keeps the upstream partition layout, grown to 20 GB so that the
   update has room. A VM started from it needs a disk of at least 20 GB: in
   ci-freeipa that is `vm.disk` (default 40G), which grows the filesystem to
