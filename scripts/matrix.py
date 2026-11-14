@@ -4,7 +4,9 @@
     scripts/matrix.py [--only fedora-44,fedora-45]
 
 Each entry carries `packages` as a JSON string, ready to pass to
-render-preset.py through an environment variable.
+render-preset.py through an environment variable. Entries that share
+`name` with different `arch` are separate jobs (one runner per arch) and
+become members of one multi-arch manifest list in the registry.
 """
 import argparse
 import json
@@ -15,22 +17,31 @@ import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 IMAGES = os.path.join(HERE, '..', 'images.yaml')
-KEYS = ('name', 'distro', 'release', 'update', 'guest_packages')
+KEYS = ('name', 'distro', 'release', 'guest_packages')
+# the runner label each arch needs: a job only builds and (when it boots
+# a VM) tests an image of its own architecture
+RUNNER = {'x86_64': 'ubuntu-24.04', 'aarch64': 'ubuntu-24.04-arm'}
 
 
 def load(path=IMAGES):
     with open(path) as f:
         images = (yaml.safe_load(f) or {}).get('images') or []
-    names = [i.get('name') for i in images]
-    if len(set(names)) != len(names):
-        raise SystemExit(f'images.yaml: duplicate names in {names}')
+    seen = []
     for i in images:
+        i.setdefault('arch', 'x86_64')
+        key = (i.get('name'), i.get('arch'))
+        if key in seen:
+            raise SystemExit(f'images.yaml: duplicate name/arch: {key}')
+        seen.append(key)
         missing = [k for k in KEYS if k not in i]
         if missing:
             raise SystemExit(f'images.yaml: {i.get("name")}: missing {missing}')
         if i['distro'] not in ('fedora', 'centos'):
             raise SystemExit(f'images.yaml: {i["name"]}: unknown distro '
                              f'{i["distro"]!r}')
+        if i['arch'] not in RUNNER:
+            raise SystemExit(f'images.yaml: {i["name"]}: unknown arch '
+                             f'{i["arch"]!r} (known: {sorted(RUNNER)})')
     return images
 
 
@@ -42,7 +53,9 @@ def matrix(images, only=None):
         images = [i for i in images if i['name'] in only]
     return {'include': [{
         'name': i['name'], 'distro': i['distro'], 'release': str(i['release']),
-        'update': i['update'], 'packages': json.dumps(i['guest_packages']),
+        'arch': i['arch'], 'runs_on': RUNNER[i['arch']],
+        'update': i.get('update', ''),
+        'packages': json.dumps(i['guest_packages']),
         'experimental': bool(i.get('experimental')),
     } for i in images]}
 
