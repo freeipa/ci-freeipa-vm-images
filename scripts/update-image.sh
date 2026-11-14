@@ -9,20 +9,31 @@
 # cloud image, powers it off and writes the result, flattened and
 # compressed, to OUT. BASE is not modified.
 #
+# The guest architecture is read from the base image's file name
+# (.x86_64/.aarch64.qcow2): aarch64 gets qemu-system-aarch64, the virt
+# machine and UEFI firmware; x86_64 gets qemu-system-x86_64, q35 and
+# SeaBIOS.
+#
 # With REPORT_DIR it also writes
 #   packages.txt   every package in the updated image
 #   updated.txt    the packages the update added or changed
 #
-# Needs /dev/kvm, qemu-system-x86_64, qemu-img, ssh, and xorriso or
-# genisoimage.
+# Needs /dev/kvm, qemu-system-<arch>, qemu-img, ssh, xorriso or genisoimage,
+# and (aarch64) qemu-efi-aarch64.
 set -euo pipefail
 
 die() { echo "error: $*" >&2; exit 1; }
 [[ $# -ge 3 && $# -le 4 ]] || die "usage: $0 BASE.qcow2 OUT.qcow2 'UPDATE COMMAND' [REPORT_DIR]"
 base="$(realpath "$1")" out="$2" update_cmd="$3" report="${4:-}"
 [ -f "$base" ] || die "no such file: $base"
+arch=
+case "$(basename "$base")" in
+    *.aarch64.qcow2) arch=aarch64 ;;
+    *.x86_64.qcow2)  arch=x86_64 ;;
+    *) die "cannot derive the arch from the image name: $base (need .x86_64 or .aarch64.qcow2)" ;;
+esac
 [ -w /dev/kvm ] || die "/dev/kvm is not writable: a KVM host is required"
-for tool in qemu-system-x86_64 qemu-img ssh ssh-keygen python3; do
+for tool in "qemu-system-$arch" qemu-img ssh ssh-keygen python3; do
     command -v "$tool" >/dev/null 2>&1 || die "$tool not found"
 done
 iso="$(command -v xorriso || command -v genisoimage || true)"
@@ -53,13 +64,28 @@ args=(-output "$work/seed.iso" -volid cidata -joliet -rock "$work/user-data" "$w
 [ "$(basename "$iso")" != xorriso ] || args=(-as mkisofs "${args[@]}")
 "$iso" "${args[@]}" >/dev/null 2>&1
 
+# per-arch machine, cpu and firmware (aarch64: the virt machine and UEFI;
+# x86_64: q35 and SeaBIOS)
+machine_args=(-machine 'q35,accel=kvm' -cpu host)
+fw_args=()
+if [ "$arch" = aarch64 ]; then
+    fw=
+    for f in /usr/share/qemu-efi-aarch64/QEMU_EFI.fd /usr/share/AAVMF/AAVMF_CODE.fd; do
+        [ -f "$f" ] && fw="$f" && break
+    done
+    [ -n "$fw" ] || die "no aarch64 UEFI firmware found (Fedora/Ubuntu: qemu-efi-aarch64)"
+    machine_args=(-machine 'virt,accel=kvm' -cpu host)
+    fw_args=(-drive "if=pflash,format=raw,readonly=on,file=$fw")
+fi
+
 # a copy-on-write overlay: BASE stays untouched; 20G leaves room for updates
 qemu-img create -q -f qcow2 -F qcow2 -b "$base" "$work/disk.qcow2" 20G
-qemu-system-x86_64 -name image-update -machine q35,accel=kvm -cpu host \
+"qemu-system-$arch" -name image-update "${machine_args[@]}" \
     -smp 2 -m 4096 -display none -daemonize -pidfile "$work/qemu.pid" \
     -serial "file:$work/console.log" \
     -drive "file=$work/disk.qcow2,if=virtio,format=qcow2,discard=unmap" \
     -drive "file=$work/seed.iso,if=virtio,media=cdrom,readonly=on" \
+    "${fw_args[@]+"${fw_args[@]}"}" \
     -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:$port-:22" \
     -device virtio-net-pci,netdev=n0
 

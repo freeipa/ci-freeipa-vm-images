@@ -1,20 +1,22 @@
 #!/bin/bash
 # Download the newest upstream cloud image of a release and verify its SHA-256.
 #
-# Usage: fetch-image.sh DISTRO RELEASE OUTDIR
+# Usage: fetch-image.sh DISTRO RELEASE OUTDIR [ARCH]
 #   DISTRO   fedora | centos
 #   RELEASE  Fedora release number or rawhide, or CentOS Stream major version
+#   ARCH     x86_64 (default) | aarch64
 #
 # Writes OUTDIR/<upstream file name> and OUTDIR/base.env with
-#   BASE_FILE, BASE_NAME, BASE_VERSION, BASE_URL, BASE_SHA256
+#   BASE_FILE, BASE_NAME, BASE_VERSION, BASE_URL, BASE_SHA256, BASE_ARCH
 # (shell-sourceable). An image already in OUTDIR with the right checksum is
 # not downloaded again.
 set -euo pipefail
 
 die() { echo "error: $*" >&2; exit 1; }
-[ $# -eq 3 ] || die "usage: $0 DISTRO RELEASE OUTDIR"
-distro="$1" rel="$2" out="$3"
+if [ $# -lt 3 ] || [ $# -gt 4 ]; then die "usage: $0 DISTRO RELEASE OUTDIR [ARCH]"; fi
+distro="$1" rel="$2" out="$3" arch="${4:-x86_64}"
 [[ "$rel" =~ ^[0-9]+$ || "$distro/$rel" = fedora/rawhide ]] || die "release must be a number (or rawhide for fedora): $rel"
+[[ "$arch" = x86_64 || "$arch" = aarch64 ]] || die "arch must be x86_64 or aarch64: $arch"
 mkdir -p "$out"
 
 # --retry-all-errors: the redirector sometimes picks a mirror that lags and
@@ -33,28 +35,28 @@ fedora)
     for tree in $trees; do
         # dl.fedoraproject.org, not the download. redirector: its mirrors lag
         # and list a compose that another mirror does not have yet
-        base="https://dl.fedoraproject.org/pub/fedora/linux/$tree/$dir/Cloud/x86_64/images"
+        base="https://dl.fedoraproject.org/pub/fedora/linux/$tree/$dir/Cloud/$arch/images"
         html="$(listing "$base")"
-        name="$(grep -oE "Fedora-Cloud-Base-Generic-$tok-$ver\.x86_64\.qcow2" <<<"$html" | sort -uV | tail -n1 || true)"
+        name="$(grep -oE "Fedora-Cloud-Base-Generic-$tok-$ver\.$arch\.qcow2" <<<"$html" | sort -uV | tail -n1 || true)"
         [ -n "$name" ] && break
     done
-    [ -n "$name" ] || die "no Fedora $rel Generic cloud image found"
+    [ -n "$name" ] || die "no Fedora $rel $arch Generic cloud image found"
     version="${name#Fedora-Cloud-Base-Generic-"$tok"-}"
-    version="${version%.x86_64.qcow2}"
+    version="${version%."$arch".qcow2}"
     if [ "$rel" = rawhide ]; then
-        sums="$base/Fedora-Cloud-images-Rawhide-x86_64-$version-CHECKSUM"
+        sums="$base/Fedora-Cloud-images-Rawhide-$arch-$version-CHECKSUM"
     else
-        sums="$base/Fedora-Cloud-$rel-$version-x86_64-CHECKSUM"
+        sums="$base/Fedora-Cloud-$rel-$version-$arch-CHECKSUM"
     fi
     ;;
 centos)
-    base="https://cloud.centos.org/centos/$rel-stream/x86_64/images"
+    base="https://cloud.centos.org/centos/$rel-stream/$arch/images"
     html="$(listing "$base")"
     # the dated images, not the moving -latest link, so the version is known
-    name="$(grep -oE "CentOS-Stream-GenericCloud-$rel-[0-9]{8}\.[0-9]+\.x86_64\.qcow2" <<<"$html" | sort -uV | tail -n1 || true)"
-    [ -n "$name" ] || die "no CentOS Stream $rel GenericCloud image found"
+    name="$(grep -oE "CentOS-Stream-GenericCloud-$rel-[0-9]{8}\.[0-9]+\.$arch\.qcow2" <<<"$html" | sort -uV | tail -n1 || true)"
+    [ -n "$name" ] || die "no CentOS Stream $rel $arch GenericCloud image found"
     version="${name#CentOS-Stream-GenericCloud-"$rel"-}"
-    version="${version%.x86_64.qcow2}"
+    version="${version%."$arch".qcow2}"
     sums="$base/$name.SHA256SUM"
     ;;
 *) die "unknown distro: $distro (fedora or centos)" ;;
@@ -80,5 +82,6 @@ BASE_NAME='$name'
 BASE_VERSION='$version'
 BASE_URL='$base/$name'
 BASE_SHA256='$sum'
+BASE_ARCH='$arch'
 EOF
 echo "verified $name sha256 $sum"
