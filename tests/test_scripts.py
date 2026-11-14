@@ -31,16 +31,30 @@ def test_every_image_in_images_yaml_is_usable():
     for i in m:
         assert i['distro'] in ('fedora', 'centos')
         assert i['release'].isdigit() or i['release'] == 'rawhide'
+        assert i['arch'] in ('x86_64', 'aarch64')
+        assert i['runs_on'] == {'x86_64': 'ubuntu-24.04',
+                                'aarch64': 'ubuntu-24.04-arm'}[i['arch']]
         assert isinstance(json.loads(i['packages']), list)
         assert isinstance(i['experimental'], bool)
         # the registry name must be a valid lowercase repository path
         assert i['name'] == i['name'].lower() and ' ' not in i['name']
+        # entries without `update` (published as fetched) must still name
+        # what the FreeIPA test would install
+        assert i['packages'] != '[]'
+    # aarch64 members exist for rawhide and the current release only
+    arches = {}
+    for i in m:
+        arches.setdefault(i['name'], set()).add(i['arch'])
+    assert arches['fedora-45'] == {'x86_64', 'aarch64'}
+    assert arches['fedora-rawhide'] == {'x86_64', 'aarch64'}
+    assert arches['fedora-44'] == {'x86_64'}
 
 
 def test_only_selects_named_images_and_rejects_unknown_ones():
     images = matrix.load()
     got = matrix.matrix(images, ['fedora-45'])['include']
-    assert [i['name'] for i in got] == ['fedora-45']
+    assert {(i['name'], i['arch']) for i in got} \
+        == {('fedora-45', 'x86_64'), ('fedora-45', 'aarch64')}
     with pytest.raises(SystemExit, match='unknown image'):
         matrix.matrix(images, ['fedora-1'])
 
@@ -53,6 +67,15 @@ def test_a_duplicate_or_incomplete_entry_is_refused(tmp_path):
     bad.write_text(yaml.safe_dump({'images': [
         {'name': 'a', 'distro': 'fedora', 'release': '1', 'update': 'u',
          'guest_packages': []}] * 2}))
+    with pytest.raises(SystemExit, match='duplicate'):
+        matrix.load(str(bad))
+    bad.write_text(yaml.safe_dump({'images': [
+        {'name': 'a', 'distro': 'fedora', 'release': '1', 'update': 'u',
+         'guest_packages': []},
+        {'name': 'a', 'distro': 'fedora', 'release': '1',
+         'guest_packages': []},
+        {'name': 'a', 'distro': 'fedora', 'release': '1', 'arch': 'aarch64',
+         'guest_packages': []}]}))
     with pytest.raises(SystemExit, match='duplicate'):
         matrix.load(str(bad))
 
